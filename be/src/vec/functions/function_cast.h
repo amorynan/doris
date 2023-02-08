@@ -1490,6 +1490,14 @@ private:
         };
     }
 
+    WrapperType create_map_wrapper(const DataTypePtr& from_type, const DataTypeMap& to_type) const {
+        switch (from_type->get_type_id()) {
+        case TypeIndex::String:
+        default:
+            return &ConvertImplGenericFromString<ColumnString>::execute;
+        }
+    }
+
     // check jsonb value type and get to_type value
     WrapperType create_jsonb_wrapper(const DataTypeJsonb& from_type,
                                      const DataTypePtr& to_type) const {
@@ -1722,6 +1730,8 @@ private:
         case TypeIndex::Array:
             return create_array_wrapper(context, from_type,
                                         static_cast<const DataTypeArray&>(*to_type));
+        case TypeIndex::Map:
+            return create_map_wrapper(from_type, static_cast<const DataTypeMap&>(*to_type));
         case TypeIndex::Struct:
             return create_struct_wrapper(from_type, static_cast<const DataTypeStruct&>(*to_type));
         default:

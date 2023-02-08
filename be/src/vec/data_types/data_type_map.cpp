@@ -21,13 +21,22 @@
 #include "vec/columns/column_array.h"
 #include "vec/columns/column_map.h"
 #include "vec/common/assert_cast.h"
-#include "vec/data_types/data_type_factory.hpp"
+#include "vec/data_types/data_type_array.h"
+#include "vec/data_types/data_type_nullable.h"
 
 namespace doris::vectorized {
 
 DataTypeMap::DataTypeMap(const DataTypePtr& keys_, const DataTypePtr& values_) {
-    key_type = keys_;
-    value_type = values_;
+    if (!keys_->is_nullable()) {
+        key_type = make_nullable(keys_);
+    } else {
+        key_type = keys_;
+    }
+    if (!values_->is_nullable()) {
+        value_type = make_nullable(values_);
+    } else {
+        value_type = values_;
+    }
 
     keys = std::make_shared<DataTypeArray>(key_type);
     values = std::make_shared<DataTypeArray>(value_type);
@@ -78,6 +87,22 @@ void DataTypeMap::to_string(const class doris::vectorized::IColumn& column, size
     ostr.write(ss.c_str(), strlen(ss.c_str()));
 }
 
+ReadBuffer trim_data(ReadBuffer& rb, bool has_quote) {
+    size_t rb_len = rb.count();
+    if (has_quote) {
+        rb_len -= 2;
+        rb = ReadBuffer(++rb.position(), rb_len);
+    }
+    while (rb.count() > 0 && isspace(*rb.position())) {
+        ++rb.position();
+        --rb_len;
+    }
+    while (rb.count() > 0 && isspace(*(rb.position() + rb_len - 1))) {
+        --rb_len;
+    }
+    return ReadBuffer(rb.position(), rb_len);
+}
+
 Status DataTypeMap::from_string(ReadBuffer& rb, IColumn* column) const {
     DCHECK(!rb.eof());
     auto* map_column = assert_cast<ColumnMap*>(column);
@@ -91,19 +116,27 @@ Status DataTypeMap::from_string(ReadBuffer& rb, IColumn* column) const {
                                        *(rb.end() - 1));
     }
 
-    std::stringstream keyCharset;
-    std::stringstream valCharset;
-
     if (rb.count() == 2) {
         // empty map {} , need to make empty array to add offset
-        keyCharset << "[]";
-        valCharset << "[]";
+        map_column->insert_default();
     } else {
         // {"aaa": 1, "bbb": 20}, need to handle key and value to make key column arr and value arr
         // skip "{"
         ++rb.position();
-        keyCharset << "[";
-        valCharset << "[";
+        auto& keys_arr = reinterpret_cast<ColumnArray&>(map_column->get_keys());
+        ColumnArray::Offsets64& key_off = keys_arr.get_offsets();
+        DCHECK(keys_arr.get_data().is_nullable());
+        auto& values_arr = reinterpret_cast<ColumnArray&>(map_column->get_values());
+        ColumnArray::Offsets64& val_off = values_arr.get_offsets();
+        DCHECK(values_arr.get_data().is_nullable());
+        DataTypePtr kv_types[] = {key_type, value_type};
+
+        MutableColumns kv_cols;
+        kv_cols.reserve(2);
+        kv_cols.push_back(keys_arr.get_data().get_ptr());
+        kv_cols.push_back(values_arr.get_data().get_ptr());
+
+        size_t element_num = 0;
         while (!rb.eof()) {
             size_t kv_len = 0;
             auto start = rb.position();
@@ -121,27 +154,27 @@ Status DataTypeMap::from_string(ReadBuffer& rb, IColumn* column) const {
                 k_len++;
                 k_rb++;
             }
-            ReadBuffer key_rb(rb.position(), k_len);
-            ReadBuffer val_rb(k_rb + 1, kv_len - k_len - 1);
+            std::vector<ReadBuffer> rb_vec;
+            rb_vec.reserve(2);
+            rb_vec.push_back(ReadBuffer(rb.position(), k_len));
+            rb_vec.push_back(ReadBuffer(k_rb + 1, kv_len - k_len - 1));
 
-            // handle key
-            keyCharset << key_rb.to_string();
-            keyCharset << ",";
-
-            // handle value
-            valCharset << val_rb.to_string();
-            valCharset << ",";
-
+            for (int i = 0; i < 2; ++i) {
+                ReadBuffer key_rb = rb_vec[i];
+                ReadBuffer trim_kb = trim_data(key_rb, false);
+                if (key_rb.count() >= 2 &&
+                    ((*key_rb.position() == '"' && *(key_rb.end() - 1) == '"') ||
+                     (*key_rb.position() == '\'' && *(key_rb.end() - 1) == '\''))) {
+                    trim_kb = trim_data(key_rb, true);
+                }
+                kv_types[i]->from_string(trim_kb, kv_cols[i]);
+            }
             rb.position() += kv_len + 1;
+            ++element_num;
         }
-        keyCharset << ']';
-        valCharset << ']';
+        key_off.push_back(key_off.back() + element_num);
+        val_off.push_back(val_off.back() + element_num);
     }
-
-    ReadBuffer kb(keyCharset.str().data(), keyCharset.str().length());
-    ReadBuffer vb(valCharset.str().data(), valCharset.str().length());
-    keys->from_string(kb, &map_column->get_keys());
-    values->from_string(vb, &map_column->get_values());
     return Status::OK();
 }
 
