@@ -87,20 +87,66 @@ void DataTypeMap::to_string(const class doris::vectorized::IColumn& column, size
     ostr.write(ss.c_str(), strlen(ss.c_str()));
 }
 
-ReadBuffer trim_data(ReadBuffer& rb, bool has_quote) {
-    size_t rb_len = rb.count();
-    if (has_quote) {
-        rb_len -= 2;
-        rb = ReadBuffer(++rb.position(), rb_len);
+bool next_slot_from_string(ReadBuffer& rb, StringRef& output) {
+    StringRef element(rb.position(), 0);
+    bool has_quota = false;
+    if (rb.eof()) {
+        return false;
     }
-    while (rb.count() > 0 && isspace(*rb.position())) {
+
+    // ltrim
+    while (!rb.eof() && isspace(*rb.position())) {
         ++rb.position();
-        --rb_len;
+        element.data = rb.position();
     }
-    while (rb.count() > 0 && isspace(*(rb.position() + rb_len - 1))) {
-        --rb_len;
+
+    // parse string
+    if (*rb.position() == '"' || *rb.position() == '\'') {
+        const char str_sep = *rb.position();
+        size_t str_len = 1;
+        // search until next '"' or '\''
+        while (str_len < rb.count() && *(rb.position() + str_len) != str_sep) {
+            ++str_len;
+        }
+        // invalid string
+        if (str_len >= rb.count()) {
+            rb.position() = rb.end();
+            return false;
+        }
+        has_quota = true;
+        rb.position() += str_len + 1;
+        element.size += str_len + 1;
     }
-    return ReadBuffer(rb.position(), rb_len);
+
+    // parse array element until map separator ':' or ',' or end '}'
+    while (!rb.eof() && (*rb.position() != ':') && (*rb.position() != ',') &&
+           (rb.count() != 1 || *rb.position() != '}')) {
+        if (has_quota && !isspace(*rb.position())) {
+            return false;
+        }
+        ++rb.position();
+        ++element.size;
+    }
+    // invalid array element
+    if (rb.eof()) {
+        return false;
+    }
+    // adjust read buffer position to first char of next array element
+    ++rb.position();
+
+    // rtrim
+    while (element.size > 0 && isspace(element.data[element.size - 1])) {
+        --element.size;
+    }
+
+    // trim '"' and '\'' for string
+    if (element.size >= 2 && (element.data[0] == '"' || element.data[0] == '\'') &&
+        element.data[0] == element.data[element.size - 1]) {
+        ++element.data;
+        element.size -= 2;
+    }
+    output = element;
+    return true;
 }
 
 Status DataTypeMap::from_string(ReadBuffer& rb, IColumn* column) const {
@@ -120,56 +166,42 @@ Status DataTypeMap::from_string(ReadBuffer& rb, IColumn* column) const {
         // empty map {} , need to make empty array to add offset
         map_column->insert_default();
     } else {
-        // {"aaa": 1, "bbb": 20}, need to handle key and value to make key column arr and value arr
+        // {"aaa": 1, "bbb": 20}, need to handle key slot and value slot to make key column arr and value arr
         // skip "{"
         ++rb.position();
         auto& keys_arr = reinterpret_cast<ColumnArray&>(map_column->get_keys());
         ColumnArray::Offsets64& key_off = keys_arr.get_offsets();
-        DCHECK(keys_arr.get_data().is_nullable());
         auto& values_arr = reinterpret_cast<ColumnArray&>(map_column->get_values());
         ColumnArray::Offsets64& val_off = values_arr.get_offsets();
-        DCHECK(values_arr.get_data().is_nullable());
-        DataTypePtr kv_types[] = {key_type, value_type};
 
-        MutableColumns kv_cols;
-        kv_cols.reserve(2);
-        kv_cols.push_back(keys_arr.get_data().get_ptr());
-        kv_cols.push_back(values_arr.get_data().get_ptr());
+        IColumn& nested_key_column = keys_arr.get_data();
+        DCHECK(nested_key_column.is_nullable());
+        IColumn& nested_val_column = values_arr.get_data();
+        DCHECK(nested_val_column.is_nullable());
 
         size_t element_num = 0;
         while (!rb.eof()) {
-            size_t kv_len = 0;
-            auto start = rb.position();
-            while (!rb.eof() && *start != ',' && *start != '}') {
-                kv_len++;
-                start++;
+            StringRef key_element(rb.position(), rb.count());
+            if (!next_slot_from_string(rb, key_element)) {
+                return Status::InvalidArgument("Cannot read map key from text '{}'",
+                                               key_element.to_string());
             }
-            if (kv_len >= rb.count()) {
-                return Status::InvalidArgument("Invalid Length");
+            StringRef value_element(rb.position(), rb.count());
+            if (!next_slot_from_string(rb, value_element)) {
+                return Status::InvalidArgument("Cannot read map value from text '{}'",
+                                               value_element.to_string());
+            }
+            ReadBuffer krb(const_cast<char*>(key_element.data), key_element.size);
+            ReadBuffer vrb(const_cast<char*>(value_element.data), value_element.size);
+            if (auto st = key_type->from_string(krb, &nested_key_column); !st.ok()) {
+                map_column->pop_back(element_num);
+                return st;
+            }
+            if (auto st = value_type->from_string(vrb, &nested_val_column); !st.ok()) {
+                map_column->pop_back(element_num);
+                return st;
             }
 
-            size_t k_len = 0;
-            auto k_rb = rb.position();
-            while (kv_len > 0 && *k_rb != ':') {
-                k_len++;
-                k_rb++;
-            }
-            std::vector<ReadBuffer> rb_vec;
-            rb_vec.reserve(2);
-            rb_vec.push_back(ReadBuffer(rb.position(), k_len));
-            rb_vec.push_back(ReadBuffer(k_rb + 1, kv_len - k_len - 1));
-
-            for (int i = 0; i < 2; ++i) {
-                ReadBuffer key_rb = rb_vec[i];
-                ReadBuffer trim_kb = trim_data(key_rb, false);
-                if (key_rb.count() >= 2 &&
-                    ((*key_rb.position() == '"' && *(key_rb.end() - 1) == '"') ||
-                     (*key_rb.position() == '\'' && *(key_rb.end() - 1) == '\''))) {
-                    trim_kb = trim_data(key_rb, true);
-                }
-                kv_types[i]->from_string(trim_kb, kv_cols[i]);
-            }
-            rb.position() += kv_len + 1;
             ++element_num;
         }
         key_off.push_back(key_off.back() + element_num);
