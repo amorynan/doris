@@ -28,6 +28,7 @@
 #include "common/status.h"
 #include "data_type_serde.h"
 #include "olap/olap_common.h"
+#include "runtime/large_int_value.h"
 #include "util/jsonb_document.h"
 #include "util/jsonb_writer.h"
 #include "vec/columns/column.h"
@@ -67,6 +68,20 @@ public:
                                int end) const override;
     void read_column_from_arrow(IColumn& column, const arrow::Array* arrow_array, int start,
                                 int end, const cctz::time_zone& ctz) const override;
+    Status write_column_to_mysql(const IColumn& column, std::vector<MysqlRowBuffer<false>>& result,
+                                 int start, int end, int scale) const override {
+        return _write_column_to_mysql(column, result, start, end, scale);
+    }
+    Status write_column_to_mysql(const IColumn& column, std::vector<MysqlRowBuffer<true>>& result,
+                                 int start, int end, int scale) const override {
+        return _write_column_to_mysql(column, result, start, end, scale);
+    }
+
+private:
+    template <bool is_binary_format>
+    Status _write_column_to_mysql(const IColumn& column,
+                                  std::vector<MysqlRowBuffer<is_binary_format>>& result, int start,
+                                  int end, int scale) const;
 };
 
 template <typename T>
@@ -250,6 +265,37 @@ void DataTypeNumberSerDe<T>::write_one_cell_to_jsonb(const IColumn& column,
     } else {
         LOG(FATAL) << "unknown column type " << column.get_name() << " for writing to jsonb";
     }
+}
+
+template <typename T>
+template <bool is_binary_format>
+Status DataTypeNumberSerDe<T>::_write_column_to_mysql(
+        const IColumn& column, std::vector<MysqlRowBuffer<is_binary_format>>& result, int start,
+        int end, int scale) const {
+    int buf_ret = 0;
+    auto& data = assert_cast<const ColumnType&>(column).get_data();
+    for (auto i = start; i < end; ++i) {
+        if (0 != buf_ret) {
+            return Status::InternalError("pack mysql buffer failed.");
+        }
+
+        if constexpr (std::is_same_v<T, Int8> || std::is_same_v<T, UInt8>) {
+            buf_ret = result[i].push_tinyint(data[i]);
+        } else if constexpr (std::is_same_v<T, Int16> || std::is_same_v<T, UInt16>) {
+            buf_ret = result[i].push_smallint(data[i]);
+        } else if constexpr (std::is_same_v<T, Int32> || std::is_same_v<T, UInt32>) {
+            buf_ret = result[i].push_int(data[i]);
+        } else if constexpr (std::is_same_v<T, Int64> || std::is_same_v<T, UInt64>) {
+            buf_ret = result[i].push_bigint(data[i]);
+        } else if constexpr (std::is_same_v<T, Int128>) {
+            buf_ret = result[i].push_largeint(data[i]);
+        } else if constexpr (std::is_same_v<T, float>) {
+            buf_ret = result[i].push_float(data[i]);
+        } else if constexpr (std::is_same_v<T, double>) {
+            buf_ret = result[i].push_double(data[i]);
+        }
+    }
+    return Status::OK();
 }
 
 } // namespace vectorized

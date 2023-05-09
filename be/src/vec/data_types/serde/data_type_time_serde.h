@@ -16,51 +16,25 @@
 // under the License.
 
 #pragma once
-
+#include <gen_cpp/types.pb.h>
 #include <glog/logging.h>
+#include <stddef.h>
 #include <stdint.h>
 
-#include <ostream>
-
-#include "common/status.h"
-#include "data_type_serde.h"
-#include "util/jsonb_writer.h"
+#include "data_type_number_serde.h"
+#include "vec/core/types.h"
 
 namespace doris {
-class PValues;
-class JsonbValue;
+class JsonbOutStream;
 
 namespace vectorized {
-class IColumn;
 class Arena;
 
-class DataTypeArraySerDe : public DataTypeSerDe {
-public:
-    DataTypeArraySerDe(const DataTypeSerDeSPtr& _nested_serde) : nested_serde(_nested_serde) {}
-
-    Status write_column_to_pb(const IColumn& column, PValues& result, int start,
-                              int end) const override {
-        LOG(FATAL) << "Not support write array column to pb";
-    }
-    Status read_column_from_pb(IColumn& column, const PValues& arg) const override {
-        LOG(FATAL) << "Not support read from pb to array";
-    }
-
-    void write_one_cell_to_jsonb(const IColumn& column, JsonbWriter& result, Arena* mem_pool,
-                                 int32_t col_id, int row_num) const override;
-
-    void read_one_cell_from_jsonb(IColumn& column, const JsonbValue* arg) const override;
-
-    void write_column_to_arrow(const IColumn& column, const UInt8* null_bytemap,
-                               arrow::ArrayBuilder* array_builder, int start,
-                               int end) const override;
-    void read_column_from_arrow(IColumn& column, const arrow::Array* arrow_array, int start,
-                                int end, const cctz::time_zone& ctz) const override;
+class DataTypeTimeSerDe : public DataTypeNumberSerDe<Float64> {
     Status write_column_to_mysql(const IColumn& column, std::vector<MysqlRowBuffer<false>>& result,
                                  int start, int end, int scale) const override {
         return _write_column_to_mysql(column, result, start, end, scale);
     }
-
     Status write_column_to_mysql(const IColumn& column, std::vector<MysqlRowBuffer<true>>& result,
                                  int start, int end, int scale) const override {
         return _write_column_to_mysql(column, result, start, end, scale);
@@ -71,9 +45,6 @@ private:
     Status _write_column_to_mysql(const IColumn& column,
                                   std::vector<MysqlRowBuffer<is_binary_format>>& result, int start,
                                   int end, int scale) const;
-
-private:
-    DataTypeSerDeSPtr nested_serde;
 };
 } // namespace vectorized
 } // namespace doris
