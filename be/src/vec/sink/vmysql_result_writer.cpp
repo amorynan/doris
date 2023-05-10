@@ -34,6 +34,7 @@
 #include "olap/hll.h"
 #include "runtime/buffer_control_block.h"
 #include "runtime/decimalv2_value.h"
+#include "runtime/define_primitive_type.h"
 #include "runtime/large_int_value.h"
 #include "runtime/primitive_type.h"
 #include "runtime/runtime_state.h"
