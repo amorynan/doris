@@ -135,8 +135,6 @@ Status ColumnReader::create(const ColumnReaderOptions& opts, const ColumnMetaPB&
         }
         case FieldType::OLAP_FIELD_TYPE_MAP: {
             // map reader now has 3 sub readers for key, value, offsets(scalar), null(scala)
-            std::unique_ptr<ColumnReader> map_reader(
-                    new ColumnReader(opts, meta, num_rows, file_reader));
             std::unique_ptr<ColumnReader> key_reader;
             RETURN_IF_ERROR(ColumnReader::create(opts, meta.children_columns(0),
                                                  meta.children_columns(0).num_rows(), file_reader,
@@ -155,6 +153,11 @@ Status ColumnReader::create(const ColumnReaderOptions& opts, const ColumnMetaPB&
                                                      meta.children_columns(3).num_rows(),
                                                      file_reader, &null_reader));
             }
+
+            // The num rows of the map reader equals to the num rows of the length reader.
+            num_rows = meta.children_columns(2).num_rows();
+            std::unique_ptr<ColumnReader> map_reader(
+                    new ColumnReader(opts, meta, num_rows, file_reader));
             map_reader->_sub_readers.resize(meta.children_columns_size());
 
             map_reader->_sub_readers[0] = std::move(key_reader);
@@ -672,6 +675,7 @@ Status MapFileColumnIterator::next_batch(size_t* n, vectorized::MutableColumnPtr
     auto& column_offsets =
             static_cast<vectorized::ColumnArray::ColumnOffsets&>(*column_offsets_ptr);
     RETURN_IF_ERROR(_offsets_iterator->_calculate_offsets(start, column_offsets));
+    DCHECK(column_offsets.get_data().back() >= column_offsets.get_data()[start - 1]);
     size_t num_items =
             column_offsets.get_data().back() - column_offsets.get_data()[start - 1]; // -1 is valid
     auto key_ptr = column_map->get_keys().assume_mutable();
