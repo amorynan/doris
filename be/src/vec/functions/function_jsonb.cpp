@@ -517,6 +517,24 @@ public:
         auto writer = std::make_unique<JsonbWriter>();
         std::unique_ptr<JsonbToJson> formater;
 
+        JsonbPath const_path;
+        if (rdata_columns.size() == 1 && path_const[0]) {
+            const ColumnString* path_col = rdata_columns[0];
+            const ColumnString::Chars& rdata = path_col->get_chars();
+            const ColumnString::Offsets& roffsets = path_col->get_offsets();
+            size_t r_off = roffsets[-1];
+            size_t r_size = roffsets[0] - r_off;
+            const char* r_raw = reinterpret_cast<const char*>(&rdata[r_off]);
+
+            if (!const_path.seek(r_raw, r_size)) {
+                return Status::InvalidArgument(
+                        "Json path error: {} for value: {}",
+                        JsonbErrMsg::getErrMsg(JsonbErrType::E_INVALID_JSON_PATH),
+                        std::string_view(reinterpret_cast<const char*>(rdata.data()),
+                                            rdata.size()));
+            }
+        }
+
         for (size_t i = 0; i < input_rows_count; ++i) {
             if (null_map[i]) {
                 StringOP::push_null_string(i, res_data, res_offsets, null_map);
@@ -526,24 +544,29 @@ public:
             size_t l_size = loffsets[index_check_const(i, json_data_const)] - l_off;
             const char* l_raw = reinterpret_cast<const char*>(&ldata[l_off]);
             if (rdata_columns.size() == 1) { // just return origin value
-                const ColumnString* path_col = rdata_columns[0];
-                const ColumnString::Chars& rdata = path_col->get_chars();
-                const ColumnString::Offsets& roffsets = path_col->get_offsets();
-                size_t r_off = roffsets[index_check_const(i, path_const[0]) - 1];
-                size_t r_size = roffsets[index_check_const(i, path_const[0])] - r_off;
-                const char* r_raw = reinterpret_cast<const char*>(&rdata[r_off]);
+                if (path_const[0]) {
+                    inner_loop_impl(i, res_data, res_offsets, null_map, writer, formater,
+                                l_raw, l_size, const_path);
+                } else {
+                    const ColumnString* path_col = rdata_columns[0];
+                    const ColumnString::Chars& rdata = path_col->get_chars();
+                    const ColumnString::Offsets& roffsets = path_col->get_offsets();
+                    size_t r_off = roffsets[index_check_const(i, path_const[0]) - 1];
+                    size_t r_size = roffsets[index_check_const(i, path_const[0])] - r_off;
+                    const char* r_raw = reinterpret_cast<const char*>(&rdata[r_off]);
 
-                JsonbPath path;
-                if (!path.seek(r_raw, r_size)) {
-                    return Status::InvalidArgument(
-                            "Json path error: {} for value: {}",
-                            JsonbErrMsg::getErrMsg(JsonbErrType::E_INVALID_JSON_PATH),
-                            std::string_view(reinterpret_cast<const char*>(rdata.data()),
-                                             rdata.size()));
+                    JsonbPath path;
+                    if (!path.seek(r_raw, r_size)) {
+                        return Status::InvalidArgument(
+                                "Json path error: {} for value: {}",
+                                JsonbErrMsg::getErrMsg(JsonbErrType::E_INVALID_JSON_PATH),
+                                std::string_view(reinterpret_cast<const char*>(rdata.data()),
+                                                rdata.size()));
+                    }
+
+                    inner_loop_impl(i, res_data, res_offsets, null_map, writer, formater, l_raw, l_size,
+                                    path);
                 }
-
-                inner_loop_impl(i, res_data, res_offsets, null_map, writer, formater, l_raw, l_size,
-                                path);
             } else { // will make array string to user
                 writer->reset();
                 writer->writeStartArray();
