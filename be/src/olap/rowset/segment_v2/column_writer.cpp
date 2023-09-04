@@ -221,7 +221,7 @@ Status ColumnWriter::create(const ColumnWriterOptions& opts, const TabletColumn*
             length_column.set_index_length(-1); // no short key index
             std::unique_ptr<Field> bigint_field(FieldFactory::create(length_column));
             auto* length_writer =
-                    new ScalarColumnWriter(length_options, std::move(bigint_field), file_writer);
+                    new OffsetColumnWriter(length_options, std::move(bigint_field), file_writer);
 
             // if nullable, create null writer
             ScalarColumnWriter* null_writer = nullptr;
@@ -314,7 +314,7 @@ Status ColumnWriter::create(const ColumnWriterOptions& opts, const TabletColumn*
             length_column.set_index_length(-1); // no short key index
             std::unique_ptr<Field> bigint_field(FieldFactory::create(length_column));
             auto* length_writer =
-                    new ScalarColumnWriter(length_options, std::move(bigint_field), file_writer);
+                    new OffsetColumnWriter(length_options, std::move(bigint_field), file_writer);
 
             // create null writer
             if (opts.meta->is_nullable()) {
@@ -731,6 +731,44 @@ Status ScalarColumnWriter::finish_current_page() {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+////////////////////////////////////////////////////////////////////////////////
+// offset column writer
+////////////////////////////////////////////////////////////////////////////////
+
+OffsetColumnWriter::OffsetColumnWriter(const ColumnWriterOptions& opts,
+                                       std::unique_ptr<Field> field, io::FileWriter* file_writer)
+        : ScalarColumnWriter(opts, std::move(field), file_writer) {}
+
+OffsetColumnWriter::~OffsetColumnWriter() = default;
+
+Status OffsetColumnWriter::append_data(const uint8_t** ptr, size_t num_rows) {
+    size_t remaining = num_rows;
+    while (remaining > 0) {
+        size_t num_written = remaining;
+        RETURN_IF_ERROR(append_data_in_current_page(ptr, &num_written));
+
+        remaining -= num_written;
+
+        if (_page_builder->is_page_full()) {
+            // get next data for next array_item_rowid
+            if (remaining == 0) {
+                RETURN_IF_ERROR(finish_current_page());
+            } else {
+                RETURN_IF_ERROR(finish_current_page_with_next_data(*ptr));
+            }
+        }
+    }
+    return Status::OK();
+}
+
+Status OffsetColumnWriter::finish_current_page_with_next_data(const uint8_t* next_data_ptr) {
+    finish_current_page();
+    DataPageFooterPB* footer = get_data_pages().tail->footer.mutable_data_page_footer();
+    auto offset = *(const uint64_t*)next_data_ptr;
+    footer->set_next_array_item_ordinal(offset);
+    return Status::OK();
+}
+
 StructColumnWriter::StructColumnWriter(
         const ColumnWriterOptions& opts, std::unique_ptr<Field> field,
         ScalarColumnWriter* null_writer,
@@ -853,7 +891,7 @@ Status StructColumnWriter::finish_current_page() {
 ////////////////////////////////////////////////////////////////////////////////
 
 ArrayColumnWriter::ArrayColumnWriter(const ColumnWriterOptions& opts, std::unique_ptr<Field> field,
-                                     ScalarColumnWriter* offset_writer,
+                                     OffsetColumnWriter* offset_writer,
                                      ScalarColumnWriter* null_writer,
                                      std::unique_ptr<ColumnWriter> item_writer)
         : ColumnWriter(std::move(field), opts.meta->is_nullable()),
@@ -1054,7 +1092,7 @@ Status ArrayColumnWriter::finish_current_page() {
 
 /// ============================= MapColumnWriter =====================////
 MapColumnWriter::MapColumnWriter(const ColumnWriterOptions& opts, std::unique_ptr<Field> field,
-                                 ScalarColumnWriter* null_writer, ScalarColumnWriter* offset_writer,
+                                 ScalarColumnWriter* null_writer, OffsetColumnWriter* offset_writer,
                                  std::vector<std::unique_ptr<ColumnWriter>>& kv_writers)
         : ColumnWriter(std::move(field), opts.meta->is_nullable()), _opts(opts) {
     CHECK_EQ(kv_writers.size(), 2);
