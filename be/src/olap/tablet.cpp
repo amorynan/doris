@@ -462,7 +462,7 @@ Status Tablet::add_rowset(RowsetSharedPtr rowset) {
         }
     }
     std::vector<RowsetSharedPtr> empty_vec;
-    static_cast<void>(modify_rowsets(empty_vec, rowsets_to_delete));
+    RETURN_IF_ERROR(modify_rowsets(empty_vec, rowsets_to_delete));
     ++_newly_created_rowset_num;
     return Status::OK();
 }
@@ -1805,7 +1805,7 @@ Status Tablet::prepare_compaction_and_calculate_permits(CompactionType compactio
         if (!res.ok()) {
             set_last_full_compaction_failure_time(UnixMillis());
             *permits = 0;
-            if (!res.is<BE_NO_SUITABLE_VERSION>()) {
+            if (!res.is<FULL_NO_SUITABLE_VERSION>()) {
                 return Status::InternalError("prepare full compaction with err: {}",
                                              res.to_string());
             }
@@ -2966,7 +2966,7 @@ Status Tablet::calc_segment_delete_bitmap(RowsetSharedPtr rowset,
     vectorized::Block ordered_block = block.clone_empty();
     uint32_t pos = 0;
 
-    static_cast<void>(seg->load_pk_index_and_bf()); // We need index blocks to iterate
+    RETURN_IF_ERROR(seg->load_pk_index_and_bf()); // We need index blocks to iterate
     auto pk_idx = seg->get_primary_key_index();
     int total = pk_idx->num_rows();
     uint32_t row_id = 0;
@@ -3042,6 +3042,14 @@ Status Tablet::calc_segment_delete_bitmap(RowsetSharedPtr rowset,
                 continue;
             }
             if (is_partial_update && rowset_writer != nullptr) {
+                if (delete_bitmap->contains(
+                            {rowset_id, seg->id(), DeleteBitmap::TEMP_VERSION_FOR_DELETE_SIGN},
+                            row_id)) {
+                    LOG(INFO)
+                            << "DEBUG: skip a delete sign column while calc_segment_delete_bitmap "
+                            << "processing confict for partial update";
+                    continue;
+                }
                 // In publish version, record rows to be deleted for concurrent update
                 // For example, if version 5 and 6 update a row, but version 6 only see
                 // version 4 when write, and when publish version, version 5's value will
@@ -3127,26 +3135,17 @@ Status Tablet::calc_delete_bitmap(RowsetSharedPtr rowset,
         return Status::InternalError("Can't find tablet id: {}, maybe already dropped.",
                                      tablet_id());
     }
-    std::vector<DeleteBitmapPtr> seg_delete_bitmaps;
     for (size_t i = 0; i < segments.size(); i++) {
         auto& seg = segments[i];
         if (token != nullptr) {
             RETURN_IF_ERROR(token->submit(tablet_ptr, rowset, seg, specified_rowsets, end_version,
-                                          rowset_writer));
+                                          delete_bitmap, rowset_writer));
         } else {
-            DeleteBitmapPtr seg_delete_bitmap = std::make_shared<DeleteBitmap>(tablet_id());
-            seg_delete_bitmaps.push_back(seg_delete_bitmap);
             RETURN_IF_ERROR(calc_segment_delete_bitmap(rowset, segments[i], specified_rowsets,
-                                                       seg_delete_bitmap, end_version,
-                                                       rowset_writer));
+                                                       delete_bitmap, end_version, rowset_writer));
         }
     }
 
-    if (token == nullptr) {
-        for (auto seg_delete_bitmap : seg_delete_bitmaps) {
-            delete_bitmap->merge(*seg_delete_bitmap);
-        }
-    }
     return Status::OK();
 }
 
@@ -3293,7 +3292,7 @@ void Tablet::_rowset_ids_difference(const RowsetIdUnorderedSet& cur,
 Status Tablet::update_delete_bitmap_without_lock(const RowsetSharedPtr& rowset) {
     int64_t cur_version = rowset->end_version();
     std::vector<segment_v2::SegmentSharedPtr> segments;
-    static_cast<void>(_load_rowset_segments(rowset, &segments));
+    RETURN_IF_ERROR(_load_rowset_segments(rowset, &segments));
 
     // If this rowset does not have a segment, there is no need for an update.
     if (segments.empty()) {
@@ -3311,7 +3310,6 @@ Status Tablet::update_delete_bitmap_without_lock(const RowsetSharedPtr& rowset) 
     RETURN_IF_ERROR(calc_delete_bitmap(rowset, segments, specified_rowsets, delete_bitmap,
                                        cur_version - 1, token.get()));
     RETURN_IF_ERROR(token->wait());
-    RETURN_IF_ERROR(token->get_delete_bitmap(delete_bitmap));
     size_t total_rows = std::accumulate(
             segments.begin(), segments.end(), 0,
             [](size_t sum, const segment_v2::SegmentSharedPtr& s) { return sum += s->num_rows(); });
@@ -3418,7 +3416,6 @@ Status Tablet::update_delete_bitmap(const RowsetSharedPtr& rowset,
     RETURN_IF_ERROR(calc_delete_bitmap(rowset, segments, specified_rowsets, delete_bitmap,
                                        cur_version - 1, token.get(), rowset_writer));
     RETURN_IF_ERROR(token->wait());
-    RETURN_IF_ERROR(token->get_delete_bitmap(delete_bitmap));
 
     std::stringstream ss;
     if (watch.get_elapse_time_us() < 1 * 1000 * 1000) {
@@ -3516,7 +3513,7 @@ Status Tablet::check_rowid_conversion(
         return Status::OK();
     }
     std::vector<segment_v2::SegmentSharedPtr> dst_segments;
-    static_cast<void>(_load_rowset_segments(dst_rowset, &dst_segments));
+    RETURN_IF_ERROR(_load_rowset_segments(dst_rowset, &dst_segments));
     std::unordered_map<RowsetId, std::vector<segment_v2::SegmentSharedPtr>, HashOfRowsetId>
             input_rowsets_segment;
 
@@ -3525,7 +3522,7 @@ Status Tablet::check_rowid_conversion(
         std::vector<segment_v2::SegmentSharedPtr>& segments =
                 input_rowsets_segment[src_rowset->rowset_id()];
         if (segments.empty()) {
-            static_cast<void>(_load_rowset_segments(src_rowset, &segments));
+            RETURN_IF_ERROR(_load_rowset_segments(src_rowset, &segments));
         }
         for (auto& [src, dst] : locations) {
             std::string src_key;
