@@ -25,6 +25,7 @@
 
 #include "common/factory_creator.h"
 #include "common/status.h"
+#include "olap/rowset/segment_v2/inverted_index_reader.h"
 #include "runtime/types.h"
 #include "udf/udf.h"
 #include "vec/core/block.h"
@@ -74,6 +75,13 @@ public:
 
     [[nodiscard]] static Status filter_block(const VExprContextSPtrs& expr_contexts, Block* block,
                                              int column_to_keep);
+
+    // execute current expr with inverted index to filter block. Given a roaringbitmap of match rows
+    [[nodiscard]] Status eval_inverted_indexs(
+            const std::unordered_map<ColumnId, std::pair<vectorized::NameAndTypePair,
+                                                         segment_v2::InvertedIndexIterator*>>&
+                    colId_invertedIndexIter_mapping,
+            uint32_t num_rows, roaring::Roaring* bitmap);
 
     [[nodiscard]] static Status execute_conjuncts(const VExprContextSPtrs& ctxs,
                                                   const std::vector<IColumn::Filter*>* filters,

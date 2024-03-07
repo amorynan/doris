@@ -27,6 +27,7 @@
 #include "udf/udf.h"
 #include "vec/core/column_numbers.h"
 #include "vec/exprs/vexpr.h"
+#include "vec/exprs/vslot_ref.h"
 #include "vec/functions/function.h"
 
 namespace doris {
@@ -62,6 +63,13 @@ public:
         return VExpr::is_constant();
     }
     static std::string debug_string(const std::vector<VectorizedFnCall*>& exprs);
+
+    Status eval_inverted_index(
+            VExprContext* context,
+            const std::unordered_map<ColumnId, std::pair<vectorized::NameAndTypePair,
+                                                         segment_v2::InvertedIndexIterator*>>&
+                    colId_invertedIndexIter_mapping,
+            uint32_t num_rows, roaring::Roaring* bitmap) const override;
 
     bool fast_execute(FunctionContext* context, Block& block, const ColumnNumbers& arguments,
                       size_t result, size_t input_rows_count);

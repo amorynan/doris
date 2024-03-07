@@ -243,6 +243,22 @@ public:
         return Status::OK();
     }
 
+    Status create_field_with_name(lucene::document::Field** field, string field_name) {
+        std::wstring field_name_wstring = std::wstring(field_name.begin(), field_name.end());
+        int field_config = int(lucene::document::Field::STORE_NO) |
+                           int(lucene::document::Field::INDEX_NONORMS);
+        field_config |= (_parser_type == InvertedIndexParserType::PARSER_NONE)
+                                ? int(lucene::document::Field::INDEX_UNTOKENIZED)
+                                : int(lucene::document::Field::INDEX_TOKENIZED);
+        *field = new lucene::document::Field(field_name_wstring.c_str(), field_config);
+        (*field)->setOmitTermFreqAndPositions(
+                get_parser_phrase_support_string_from_properties(_index_meta->properties()) ==
+                                INVERTED_INDEX_PARSER_PHRASE_SUPPORT_YES
+                        ? false
+                        : true);
+        return Status::OK();
+    }
+
     Status create_analyzer(std::unique_ptr<lucene::analysis::Analyzer>& analyzer) {
         try {
             switch (_parser_type) {
@@ -386,6 +402,87 @@ public:
         }
         return Status::OK();
     }
+
+    //    Status add_map_values(size_t map_key_field_size, size_t map_val_field_size,
+    //                          const void* map_key_ptr, const void* map_value_ptr,
+    //                          const uint8_t* key_null_map, const uint8_t* val_null_map,
+    //                          const uint8_t* offsets_ptr, size_t num_rows) {
+    //        // 1. make map key as inverted index field name with necessary cast behavior if key type is not string
+    //        // 2. make a cache to store map key and inverted index field which can avoid duplicate field creation to insert
+    //        // 3. _doc object should clear for every single row for fields to be added
+    //        // 4. avoid field creation in different map's keyvalue pair, we can temp use a object pool to store the field
+    //        // 5. add document for every row
+    //        if (num_rows == 0) {
+    //                // no values to add inverted index
+    //                return Status::OK();
+    //        }
+    //        const auto* offsets = reinterpret_cast<const uint64_t*>(offsets_ptr);
+    //        // 1. make map key as inverted index field name with necessary cast behavior if key type is not string
+    //        auto genFieldName = [map_key_ptr, map_key_field_size](int j) -> string {
+    //                if constexpr (field_is_slice_type(additional_type)) {
+    //                        auto* v = (Slice*)((const uint8_t*)map_key_ptr + j * map_key_field_size);
+    //                        return string(v->get_data(), v->get_size());
+    //                } else if constexpr (field_is_numeric_type(additional_type)) {
+    //                        auto* v = (AdditionalCppType*)((const uint8_t*)map_key_ptr + j * map_key_field_size);
+    //                        return std::to_string(*v);
+    //                }
+    //        };
+    //        if constexpr (field_is_slice_type(field_type)) {
+    //            if (_index_writer == nullptr) {
+    //                return Status::InternalError(
+    //                        "index writer is null in inverted index writer");
+    //            }
+    //            auto ignore_above_value =
+    //                    get_parser_ignore_above_value_from_properties(_index_meta->properties());
+    //            auto ignore_above = std::stoi(ignore_above_value);
+    //            for (int i = 0; i < num_rows; ++i) {
+    //                // offsets[i+1] is now row element count
+    //                std::vector<std::string> strings;
+    //                // [0, 3, 6]
+    //                // [10,20,30] [20,30,40], [30,40,50]
+    //                auto start_off = offsets[i];
+    //                auto end_off = offsets[i + 1];
+    //                string field_name;
+    //                for (auto j = start_off; j < end_off; ++j) {
+    //                    // key or value is null, skip
+    //                    if (key_null_map[j] == 1 || val_null_map[j] == 1) {
+    //                        continue;
+    //                    }
+    //                    field_name = genFieldName(j);
+    //                    size_t value_length = sizeof(field_type);
+    //                    auto* v = (Slice*)((const uint8_t*) map_value_ptr + j * map_val_field_size);
+    //                    strings.emplace_back(v->get_data(), v->get_size());
+    //                }
+    //
+    //                auto value = join(strings, " ");
+    //                // only ignore_above UNTOKENIZED strings and empty strings not tokenized
+    //                if ((_parser_type == InvertedIndexParserType::PARSER_NONE &&
+    //                     value.length() > ignore_above) ||
+    //                    (_parser_type != InvertedIndexParserType::PARSER_NONE && value.empty())) {
+    //                    RETURN_IF_ERROR(add_null_document());
+    //                } else {
+    //                    // new field or get from field_pool
+    //                    create_field_with_name(&_field, field_name);
+    //                    new_fulltext_field(value.c_str(), value.length());
+    //                    RETURN_IF_ERROR(add_document());
+    //                }
+    //                _rid++;
+    //            }
+    //        } else if constexpr (field_is_numeric_type(field_type)) {
+    //            for (int i = 0; i < num_rows; ++i) {
+    //                auto start_off = offsets[i];
+    //                auto end_off = offsets[i + 1];
+    //                for (size_t j = start_off; j < end_off; ++j) {
+    //                    if (val_null_map[j] == 1) {
+    //                        continue;
+    //                    }
+    //                    const CppType* p = &reinterpret_cast<const CppType*>(map_value_ptr)[j];
+    //                    std::string new_value;
+    //                    size_t value_length = sizeof(CppType);
+    //                }
+    //            }
+    //        }
+    //    }
 
     Status add_array_values(size_t field_size, const void* value_ptr, const uint8_t* null_map,
                             const uint8_t* offsets_ptr, size_t count) override {
@@ -612,6 +709,7 @@ private:
 
     std::unique_ptr<lucene::document::Document> _doc = nullptr;
     lucene::document::Field* _field = nullptr;
+    //    ObjectPool* _field_pool = nullptr;
     std::unique_ptr<lucene::index::IndexWriter> _index_writer = nullptr;
     std::unique_ptr<lucene::analysis::Analyzer> _analyzer = nullptr;
     std::unique_ptr<lucene::util::Reader> _char_string_reader = nullptr;
@@ -641,6 +739,15 @@ Status InvertedIndexColumnWriter::create(const Field* field,
             type = typeinfo->type();
         } else {
             return Status::NotSupported("unsupported array type for inverted index: " +
+                                        std::to_string(int(type)));
+        }
+    } else if (type == FieldType::OLAP_FIELD_TYPE_MAP) {
+        const auto* map_typeinfo = dynamic_cast<const MapTypeInfo*>(typeinfo);
+        if (map_typeinfo != nullptr) {
+            typeinfo = map_typeinfo->get_value_type_info();
+            type = typeinfo->type();
+        } else {
+            return Status::NotSupported("unsupported map type for inverted index: " +
                                         std::to_string(int(type)));
         }
     }

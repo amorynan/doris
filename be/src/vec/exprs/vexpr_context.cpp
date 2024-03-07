@@ -138,6 +138,24 @@ Status VExprContext::filter_block(const VExprContextSPtrs& expr_contexts, Block*
                                               column_to_keep);
 }
 
+// execute expr with inverted index which column a, b has inverted indexes
+//  but some situation although column b has indexes, but apply index is not useful, we should
+//  skip this expr, just do not apply index anymore.
+/**
+ * @param name_with_types all columns with name and type in all _common_expr_ctxs_push_down see in SegmentIterator.h.
+ * @param inverted_indexs_iter columns which extracted from _common_expr_ctxs_push_down and has inverted index.
+ * @param num_rows number of rows in one segment.
+ * @param bitmap roaring bitmap to store the result. 0 is present filed by index.
+ * @return status not ok means execute failed.
+ */
+Status VExprContext::eval_inverted_indexs(
+        const std::unordered_map<ColumnId, std::pair<vectorized::NameAndTypePair,
+                                                     segment_v2::InvertedIndexIterator*>>&
+                colId_invertedIndexIter_mapping,
+        uint32_t num_rows, roaring::Roaring* bitmap) {
+    return _root->eval_inverted_index(this, colId_invertedIndexIter_mapping, num_rows, bitmap);
+}
+
 Status VExprContext::execute_conjuncts(const VExprContextSPtrs& ctxs,
                                        const std::vector<IColumn::Filter*>* filters, Block* block,
                                        IColumn::Filter* result_filter, bool* can_filter_all) {
