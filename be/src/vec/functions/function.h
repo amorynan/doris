@@ -31,6 +31,7 @@
 
 #include "common/exception.h"
 #include "common/status.h"
+#include "olap/rowset/segment_v2/inverted_index_reader.h"
 #include "udf/udf.h"
 #include "vec/core/block.h"
 #include "vec/core/column_numbers.h"
@@ -62,8 +63,10 @@ void has_variadic_argument_types(...);
 
 template <typename T>
 concept HasGetVariadicArgumentTypesImpl = requires(T t) {
-    { t.get_variadic_argument_types_impl() } -> std::same_as<DataTypes>;
-};
+                                              {
+                                                  t.get_variadic_argument_types_impl()
+                                                  } -> std::same_as<DataTypes>;
+                                          };
 
 bool have_null_column(const Block& block, const ColumnNumbers& args);
 bool have_null_column(const ColumnsWithTypeAndName& args);
@@ -177,6 +180,14 @@ public:
                            size_t result, size_t input_rows_count, bool dry_run = false) const {
         return prepare(context, block, arguments, result)
                 ->execute(context, block, arguments, result, input_rows_count, dry_run);
+    }
+
+    virtual Status eval_inverted_index(FunctionContext* context,
+                                       const vectorized::NameAndTypePair& data_type_with_name,
+                                       segment_v2::InvertedIndexIterator* iter, uint32_t num_rows,
+                                       roaring::Roaring* bitmap) const {
+        return Status::NotSupported("eval_inverted_index is not supported in function: ",
+                                    get_name());
     }
 
     /// Do cleaning work when function is finished, i.e., release state variables in the
@@ -391,6 +402,14 @@ public:
         __builtin_unreachable();
     }
 
+    Status eval_inverted_index(FunctionContext* context,
+                               const vectorized::NameAndTypePair& data_type_with_name,
+                               segment_v2::InvertedIndexIterator* iter, uint32_t num_rows,
+                               roaring::Roaring* bitmap) const override {
+        LOG(FATAL) << "eval_inverted_index is not implemented for IFunction";
+        __builtin_unreachable();
+    }
+
     Status open(FunctionContext* context, FunctionContext::FunctionStateScope scope) override {
         return Status::OK();
     }
@@ -427,6 +446,12 @@ protected:
                         size_t result, size_t input_rows_count) const final {
         return function->execute_impl(context, block, arguments, result, input_rows_count);
     }
+    Status eval_inverted_index(FunctionContext* context,
+                               const vectorized::NameAndTypePair& data_type_with_name,
+                               segment_v2::InvertedIndexIterator* iter, uint32_t num_rows,
+                               roaring::Roaring* bitmap) const {
+        return function->eval_inverted_index(context, data_type_with_name, iter, num_rows, bitmap);
+    }
     Status execute_impl_dry_run(FunctionContext* context, Block& block,
                                 const ColumnNumbers& arguments, size_t result,
                                 size_t input_rows_count) const final {
@@ -454,7 +479,7 @@ private:
 
 /*
  * when we register a function which didn't specify its base(i.e. inherited from IFunction), actually we use this as a wrapper.
- * it saves real implementation as `function`. 
+ * it saves real implementation as `function`.
 */
 class DefaultFunction final : public IFunctionBase {
 public:
@@ -482,6 +507,12 @@ public:
 
     Status close(FunctionContext* context, FunctionContext::FunctionStateScope scope) override {
         return function->close(context, scope);
+    }
+    Status eval_inverted_index(FunctionContext* context,
+                               const vectorized::NameAndTypePair& data_type_with_name,
+                               segment_v2::InvertedIndexIterator* iter, uint32_t num_rows,
+                               roaring::Roaring* bitmap) const override {
+        return function->eval_inverted_index(context, data_type_with_name, iter, num_rows, bitmap);
     }
 
     bool can_fast_execute() const override {
