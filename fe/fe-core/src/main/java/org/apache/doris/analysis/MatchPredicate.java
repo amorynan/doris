@@ -33,6 +33,7 @@ import org.apache.doris.thrift.TMatchPredicate;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
+import com.google.gson.annotations.SerializedName;
 
 import java.util.List;
 import java.util.Map;
@@ -146,10 +147,17 @@ public class MatchPredicate extends Predicate {
         }
     }
 
-    private final Operator op;
+    @SerializedName("op")
+    private Operator op;
     private String invertedIndexParser;
     private String invertedIndexParserMode;
     private Map<String, String> invertedIndexCharFilter;
+
+    private MatchPredicate() {
+        // use for serde only
+        invertedIndexParser = InvertedIndexUtil.INVERTED_INDEX_PARSER_UNKNOWN;
+        invertedIndexParserMode = InvertedIndexUtil.INVERTED_INDEX_PARSER_FINE_GRANULARITY;
+    }
 
     public MatchPredicate(Operator op, Expr e1, Expr e2) {
         super();
@@ -276,5 +284,4 @@ public class MatchPredicate extends Predicate {
     public int hashCode() {
         return 31 * super.hashCode() + Objects.hashCode(op);
     }
-
 }
