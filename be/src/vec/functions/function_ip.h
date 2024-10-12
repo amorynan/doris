@@ -668,12 +668,14 @@ public:
             (!is_column_nullable(*arg_column) && !is_column_const(*arg_column))) {
             // if not we should skip inverted index and evaluate in expression
             return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                    "Inverted index evaluate skipped, is_ip_address_in_range only support const value");
+                    "Inverted index evaluate skipped, is_ip_address_in_range only support const "
+                    "value");
         }
         // check param type is string
         if (WhichDataType(*arg_type).is_string()) {
             return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                    "Inverted index evaluate skipped, is_ip_address_in_range only support string type");
+                    "Inverted index evaluate skipped, is_ip_address_in_range only support string "
+                    "type");
         }
         // min && max ip address
         Field min_ip, max_ip;
@@ -700,16 +702,16 @@ public:
         std::unique_ptr<segment_v2::InvertedIndexQueryParamFactory> query_param = nullptr;
         // >= min ip
         RETURN_IF_ERROR(segment_v2::InvertedIndexQueryParamFactory::create_query_value(
-                        param_type, &min_ip, query_param));
+                param_type, &min_ip, query_param));
         RETURN_IF_ERROR(iter->read_from_inverted_index(
                 data_type_with_name.first, query_param->get_value(),
                 segment_v2::InvertedIndexQueryType::GREATER_EQUAL_QUERY, num_rows, res_roaring));
         // <= max ip
         RETURN_IF_ERROR(segment_v2::InvertedIndexQueryParamFactory::create_query_value(
-                        param_type, &max_ip, query_param));
-        RETURN_IF_ERROR(iter->read_from_inverted_index(data_type_with_name.first, query_param->get_value(),
-                                            segment_v2::InvertedIndexQueryType::LESS_EQUAL_QUERY,
-                                            num_rows, max_roaring));
+                param_type, &max_ip, query_param));
+        RETURN_IF_ERROR(iter->read_from_inverted_index(
+                data_type_with_name.first, query_param->get_value(),
+                segment_v2::InvertedIndexQueryType::LESS_EQUAL_QUERY, num_rows, max_roaring));
 
         *res_roaring &= *max_roaring;
         segment_v2::InvertedIndexResultBitmap result(res_roaring, null_bitmap);
