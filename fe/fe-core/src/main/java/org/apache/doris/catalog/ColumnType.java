@@ -163,6 +163,10 @@ public abstract class ColumnType {
         schemaChangeMatrix[PrimitiveType.ARRAY.ordinal()][PrimitiveType.ARRAY.ordinal()] = true;
         schemaChangeMatrix[PrimitiveType.STRUCT.ordinal()][PrimitiveType.STRUCT.ordinal()] = true;
         schemaChangeMatrix[PrimitiveType.MAP.ordinal()][PrimitiveType.MAP.ordinal()] = true;
+        // We support schema change from complex type to variant type.
+        schemaChangeMatrix[PrimitiveType.ARRAY.ordinal()][PrimitiveType.VARIANT.ordinal()] = true;
+        schemaChangeMatrix[PrimitiveType.STRUCT.ordinal()][PrimitiveType.VARIANT.ordinal()] = true;
+        schemaChangeMatrix[PrimitiveType.MAP.ordinal()][PrimitiveType.VARIANT.ordinal()] = true;
     }
 
     static boolean isSchemaChangeAllowed(Type lhs, Type rhs) {

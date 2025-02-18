@@ -335,6 +335,13 @@ public class CastExpr extends Expr {
             if ((type.isMapType() || type.isStructType()) && childType.isStringType()) {
                 return;
             }
+            if ((type.isVariantType() || type.isJsonbType()) && childType.isComplexType()) {
+                // for complex type cast to jsonb|variant we make ret is always nullable
+                NullableMode nullableMode = Function.NullableMode.ALWAYS_NULLABLE;
+                fn = new Function(new FunctionName(getFnName(type)), Lists.newArrayList(childType), type,
+                        false, true, nullableMode);
+                return;
+            }
             if (childType.isNull() && Type.canCastTo(childType, type)) {
                 return;
             } else {
