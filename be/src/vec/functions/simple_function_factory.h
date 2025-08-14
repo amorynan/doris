@@ -117,6 +117,8 @@ void register_function_dict_get(SimpleFunctionFactory& factory);
 void register_function_dict_get_many(SimpleFunctionFactory& factory);
 void register_function_llm_translate(SimpleFunctionFactory& factory);
 void register_function_llm_sentiment(SimpleFunctionFactory& factory);
+void register_function_llm_similarity(SimpleFunctionFactory& factory);
+void register_function_llm_filter(SimpleFunctionFactory& factory);
 void register_function_llm_fixgrammar(SimpleFunctionFactory& factory);
 void register_function_llm_extract(SimpleFunctionFactory& factory);
 void register_function_llm_generate(SimpleFunctionFactory& factory);
@@ -124,6 +126,7 @@ void register_function_llm_mask(SimpleFunctionFactory& factory);
 void register_function_llm_classify(SimpleFunctionFactory& factory);
 void register_function_llm_summarize(SimpleFunctionFactory& factory);
 void register_function_score(SimpleFunctionFactory& factory);
+void register_function_variant_type(SimpleFunctionFactory& factory);
 
 #if defined(BE_TEST) && !defined(BE_BENCHMARK)
 void register_function_throw_exception(SimpleFunctionFactory& factory);
@@ -335,6 +338,8 @@ public:
             register_function_dict_get_many(instance);
             register_function_llm_translate(instance);
             register_function_llm_sentiment(instance);
+            register_function_llm_similarity(instance);
+            register_function_llm_filter(instance);
             register_function_llm_fixgrammar(instance);
             register_function_llm_extract(instance);
             register_function_llm_generate(instance);
@@ -345,6 +350,7 @@ public:
 #if defined(BE_TEST) && !defined(BE_BENCHMARK)
             register_function_throw_exception(instance);
 #endif
+            register_function_variant_type(instance);
         });
         return instance;
     }

@@ -50,14 +50,12 @@ public class ArrayAvg extends ScalarFunction implements ExplicitlyCastableSignat
 
     public static final List<FunctionSignature> SIGNATURES = ImmutableList.of(
             FunctionSignature.ret(DoubleType.INSTANCE).args(ArrayType.of(DoubleType.INSTANCE)),
-            FunctionSignature.ret(DoubleType.INSTANCE).args(ArrayType.of(BooleanType.INSTANCE)),
             FunctionSignature.ret(DoubleType.INSTANCE).args(ArrayType.of(TinyIntType.INSTANCE)),
             FunctionSignature.ret(DoubleType.INSTANCE).args(ArrayType.of(SmallIntType.INSTANCE)),
             FunctionSignature.ret(DoubleType.INSTANCE).args(ArrayType.of(IntegerType.INSTANCE)),
             FunctionSignature.ret(DoubleType.INSTANCE).args(ArrayType.of(BigIntType.INSTANCE)),
             FunctionSignature.ret(DoubleType.INSTANCE).args(ArrayType.of(LargeIntType.INSTANCE)),
             FunctionSignature.ret(DecimalV3Type.WILDCARD).args(ArrayType.of(DecimalV3Type.WILDCARD)),
-            FunctionSignature.ret(DecimalV2Type.SYSTEM_DEFAULT).args(ArrayType.of(DecimalV2Type.SYSTEM_DEFAULT)),
             FunctionSignature.ret(DoubleType.INSTANCE).args(ArrayType.of(FloatType.INSTANCE))
     );
 
